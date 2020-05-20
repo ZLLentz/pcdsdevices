@@ -242,9 +242,14 @@ class StatePositioner(Device, PositionerBase, MvInterface):
             meaningful fields, ``name`` and ``value``.
         """
 
-        # Check for a malformed string digit
-        if isinstance(value, str) and value.isdigit():
-            value = int(value)
+        if isinstance(value, str):
+            # Check for a malformed string digit
+            if value.isdigit():
+                value = int(value)
+            # Enums are case-insensitive and stored in all caps
+            else:
+                value = value.upper()
+
         try:
             return self.states_enum[value]
         except KeyError:
@@ -286,16 +291,16 @@ class StatePositioner(Device, PositionerBase, MvInterface):
             if state is None:
                 continue
             state_count += 1
-            state_def[state] = i
+            state_def[state.upper()] = i
             try:
                 aliases = self._states_alias[state]
             except KeyError:
                 continue
             if isinstance(aliases, str):
-                state_def[aliases] = i
+                state_def[aliases.upper()] = i
             else:
                 for alias in aliases:
-                    state_def[alias] = i
+                    state_def[alias.upper()] = i
         enum_name = self.__class__.__name__ + 'States'
         enum = Enum(enum_name, state_def, start=0)
         if len(enum) != state_count:
