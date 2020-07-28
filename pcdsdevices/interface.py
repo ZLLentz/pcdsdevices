@@ -955,7 +955,8 @@ class LightpathMixin(OphydObject):
                                        args=args, kwargs=kw, delay=0.2)
         except Exception:
             # Without this, callbacks fail silently
-            logger.exception('Error in lightpath update callback.')
+            logger.exception('Error in lightpath update callback for %s.',
+                             obj.name)
 
     @property
     def inserted(self):
