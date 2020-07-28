@@ -979,7 +979,9 @@ class LightpathMixin(OphydObject):
 
 class LightpathInOutMixin(LightpathMixin):
     """
-    LightpathMixin for parent device with InOut subdevices
+    LightpathMixin for parent device with InOut subdevices.
+
+    Also works recursively on other LightpathInOutMixin subclasses.
     """
     _lightpath_mixin = True
 
@@ -988,13 +990,22 @@ class LightpathInOutMixin(LightpathMixin):
         out_check = []
         trans_check = []
         for obj, kwarg_dct in lightpath_values.items():
-            if not obj._state_initialized:
-                # This would prevent make check_inserted, etc. fail
-                self._retry_lightpath = True
-                return
-            in_check.append(obj.check_inserted(kwarg_dct['value']))
-            out_check.append(obj.check_removed(kwarg_dct['value']))
-            trans_check.append(obj.check_transmission(kwarg_dct['value']))
+            if isinstance(obj, LightpathInOutMixin):
+                # The inserted/removed are always just a getattr
+                # Therefore, they are safe to call in a callback
+                in_check.append(obj.inserted)
+                out_check.append(obj.removed)
+                trans_check.append(obj.transmission)
+            else:
+                if not obj._state_initialized:
+                    # This would prevent make check_inserted, etc. fail
+                    self._retry_lightpath = True
+                    return
+                # Inserted/removed are not getattr, they can check EPICS
+                # Instead, check status against the callback kwarg dict
+                in_check.append(obj.check_inserted(kwarg_dct['value']))
+                out_check.append(obj.check_removed(kwarg_dct['value']))
+                trans_check.append(obj.check_transmission(kwarg_dct['value']))
         self._inserted = any(in_check)
         self._removed = all(out_check)
         self._transmission = functools.reduce(lambda a, b: a*b, trans_check)
