@@ -15,6 +15,7 @@ from .epics_motor import BeckhoffAxis
 from .inout import InOutPositioner
 from .interface import BaseInterface, FltMvInterface, LightpathMixin
 from .signal import InternalSignal
+from .variety import set_metadata
 
 logger = logging.getLogger(__name__)
 MAX_FILTERS = 12
@@ -34,7 +35,7 @@ class Filter(InOutPositioner):
     can instantiate these classes via the :func:`Attenuator` factory function.
     """
 
-    state = Cpt(EpicsSignal, ':STATE', write_pv=':GO', kind='hinted')
+    state = Cpt(EpicsSignal, ':STATE', write_pv=':GO', kind='normal')
     thickness = Cpt(EpicsSignal, ':THICK', kind='config')
     material = Cpt(EpicsSignal, ':MATERIAL', kind='config')
     stuck = Cpt(EpicsSignal, ':IS_STUCK', kind='omitted')
@@ -96,11 +97,22 @@ class AttBase(FltMvInterface, PVPositioner):
         super().__init__(prefix, name=name, limits=(0, 1), **kwargs)
         self.filters = []
         self._has_subscribed_state = False
+        self._transmission = 1
         for i in range(1, MAX_FILTERS + 1):
             try:
                 self.filters.append(getattr(self, 'filter{}'.format(i)))
             except AttributeError:
                 break
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        set_metadata(cls.readback,
+                     dict(variety='scalar',
+                          display_format='exponential'))
+        cls.readback.sub_value(cls._update_trans)
+
+    def _update_trans(self, *args, value, **kwargs):
+        self._transmission = value
 
     @property
     def actuate_value(self):
@@ -157,17 +169,17 @@ class AttBase(FltMvInterface, PVPositioner):
         Ratio of pass-through beam to incoming beam as a value between
         1 (full beam) and 0 (no beam).
         """
-        return self.position
+        return self._transmission
 
     @property
     def inserted(self):
         """`True` if any blade is inserted."""
-        return self.position < 1
+        return self.transmission < 1
 
     @property
     def removed(self):
         """`True` if all blades are removed."""
-        return self.position == 1
+        return self.transmission >= 1
 
     def insert(self, wait=False, timeout=None, moved_cb=None):
         """Block the beam by setting transmission to zero."""
