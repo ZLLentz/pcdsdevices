@@ -50,7 +50,7 @@ class PIMY(InOutRecordPositioner, BaseInterface):
         return super().stage()
 
 
-class PIM(Device, BaseInterface):
+class PIM(Device, BaseInterface, LightpathInOutMixin):
     """
     Profile Intensity Monitor.
 
@@ -72,6 +72,9 @@ class PIM(Device, BaseInterface):
         The EPICS base PV of the zoom motor. If None, it will be attempted to
         be inferred from `prefix`.
     """
+
+    lightpath_cpts = ['state']
+    _icon = 'fa.video-camera'
 
     _prefix_start = ''
 

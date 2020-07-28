@@ -10,7 +10,7 @@ from .doc_stubs import IPM_base, basic_positioner_init, insert_remove
 from .epics_motor import IMS
 from .evr import Trigger
 from .inout import InOutRecordPositioner
-from .interface import BaseInterface
+from .interface import BaseInterface, LightpathInOutMixin
 from .utils import ipm_screen
 
 
@@ -36,7 +36,7 @@ class IPMTarget(InOutRecordPositioner):
         self.y_motor = self.motor
 
 
-class IPMDiode(Device, BaseInterface):
+class IPMDiode(Device, BaseInterface, LightpathInOutMixin):
     """
     Diode of a standard intensity position monitor.
 
@@ -46,6 +46,7 @@ class IPMDiode(Device, BaseInterface):
     y, which points to the motor of the y-motion.
     """
 
+    lightpath_cpts = ['state']
     tab_whitelist = ['x_motor', 'y_motor', 'insert', 'remove']
 
     x_motor = Cpt(IMS, ':X_MOTOR', kind='normal')
@@ -54,16 +55,6 @@ class IPMDiode(Device, BaseInterface):
     def __init__(self, prefix, *, name,  **kwargs):
         super().__init__(prefix, name=name, **kwargs)
         self.y_motor = self.state.motor
-
-    @property
-    def inserted(self):
-        """Returns `True` if diode is inserted."""
-        return self.state.inserted
-
-    @property
-    def removed(self):
-        """Returns `True` if diode is removed."""
-        return self.state.removed
 
     def insert(self, moved_cb=None, timeout=None, wait=False):
         """Moves the diode into the beam."""
@@ -86,21 +77,21 @@ class IPMDiode(Device, BaseInterface):
     remove.__doc__ += insert_remove
 
 
-class IPMMotion(Device, BaseInterface):
+class IPMMotion(Device, BaseInterface, LightpathInOutMixin):
     """
     Standard intensity position monitor.
 
     This contains two state devices, a target and a diode.
     """
 
-    target = Cpt(IPMTarget, ':TARGET', kind='normal')
-    diode = Cpt(IPMDiode, ':DIODE', kind='normal')
-
     # QIcon for UX
     _icon = 'ei.screenshot'
-
+    lightpath_cpts = ['target', 'diode']
     tab_whitelist = ['target', 'diode', 'insert', 'remove', 'inserted',
                      'removed']
+
+    target = Cpt(IPMTarget, ':TARGET', kind='normal')
+    diode = Cpt(IPMDiode, ':DIODE', kind='normal')
 
     @property
     def inserted(self):
