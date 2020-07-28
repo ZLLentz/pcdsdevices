@@ -447,7 +447,8 @@ class StateRecordPositionerBase(StatePositioner):
         self._run_subs(sub_type=self.SUB_READBACK, obj=self, **kwargs)
 
     def get_state(self, value):
-        if not self._has_checked_state_enum:
+        if (not self._has_checked_state_enum
+            and self.state.enum_strs is not None):
             # Add the real enum as the first alias
             for enum_val, state in zip(self.state.enum_strs, self.states_list):
                 aliases = self._states_alias.get(state, [])
