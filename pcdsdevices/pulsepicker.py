@@ -25,7 +25,7 @@ class PulsePicker(InOutPVStatePositioner):
 
     __doc__ += basic_positioner_init
 
-    blade = Cpt(EpicsSignalRO, ':READ_DF', kind='normal')
+    blade = Cpt(EpicsSignalRO, ':READ_DF', kind='normal', auto_monitor=True)
     mode = Cpt(EpicsSignalRO, ':SD_SIMPLE', kind='config')
 
     cmd_reset = Cpt(EpicsSignal, ':RESET_PG', kind='omitted')

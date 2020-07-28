@@ -181,8 +181,7 @@ class AggregateSignal(Signal):
         if event_type in (None, self.SUB_VALUE) and not self._has_subscribed:
             # We need to subscribe to ALL relevant signals!
             for signal in self._sub_signals:
-                signal.subscribe(self._run_sub_value, run=False)
-            self.get()  # Ensure we have a full cache
+                signal.subscribe(self._run_sub_value, run=True)
         return cid
 
     def _run_sub_value(self, *args, **kwargs):
