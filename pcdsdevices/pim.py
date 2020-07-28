@@ -126,7 +126,7 @@ class PIM(Device, BaseInterface, LightpathInOutMixin):
         if prefix_det:
             self._prefix_det = prefix_det
         else:
-            self._prefix_det = self.prefix_start+'CVV:01'
+            self._prefix_det = self.prefix_start+'CVV:01:'
 
         # Infer the zoom motor PV from the base prefix
         if prefix_zoom:
