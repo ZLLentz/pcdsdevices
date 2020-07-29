@@ -182,6 +182,7 @@ class AggregateSignal(Signal):
             # We need to subscribe to ALL relevant signals!
             for signal in self._sub_signals:
                 signal.subscribe(self._run_sub_value, run=True)
+            self._has_subscribed = True
         return cid
 
     def _run_sub_value(self, *args, **kwargs):

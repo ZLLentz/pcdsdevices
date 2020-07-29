@@ -79,15 +79,16 @@ class StatePositioner(Device, PositionerBase, MvInterface):
             raise TypeError(('StatePositioner must be subclassed with at '
                              'least a state signal'))
         self._state_initialized = False
-        self._has_subscribed_state = False
         super().__init__(prefix, name=name, **kwargs)
         if self.states_list:
             self._state_init()
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        if cls.state is not None and not cls.states_list:
-            cls.state.sub_meta(cls._late_state_init)
+        if cls.state is not None:
+            cls.state.sub_value(cls._state_value_cb)
+            if not cls.states_list:
+                cls.state.sub_meta(cls._late_state_init)
 
     @required_for_connection
     def _state_init(self):
@@ -110,6 +111,14 @@ class StatePositioner(Device, PositionerBase, MvInterface):
             if self._unknown:
                 self.states_list.pop(0)
             self._state_init()
+
+    @required_for_connection
+    def _state_value_cb(self, *args, **kwargs):
+        self._position = kwargs['value']
+        kwargs.pop('sub_type')
+        kwargs.pop('obj')
+        self._run_subs(sub_type=self.SUB_STATE, obj=self, **kwargs)
+        self._run_subs(sub_type=self.SUB_READBACK, obj=self, **kwargs)
 
     def move(self, position, moved_cb=None, timeout=None, wait=False):
         """
@@ -184,27 +193,16 @@ class StatePositioner(Device, PositionerBase, MvInterface):
         self._run_subs(sub_type=self.SUB_START)
         return status
 
-    def subscribe(self, cb, event_type=None, run=True):
-        cid = super().subscribe(cb, event_type=event_type, run=run)
-        if event_type is None:
-            event_type = self._default_sub
-        if event_type == self.SUB_STATE and not self._has_subscribed_state:
-            self.state.subscribe(self._run_sub_state, run=False)
-            self._has_subscribed_state = True
-        return cid
-
-    def _run_sub_state(self, *args, **kwargs):
-        kwargs.pop('sub_type')
-        kwargs.pop('obj')
-        self._run_subs(sub_type=self.SUB_STATE, obj=self, **kwargs)
-
     @property
     def position(self):
         """
         Name of the positioner's current state. If aliases were provided, the
         first alias will be used instead of the base name.
         """
-        state = self.state.get()
+        try:
+            state = self._position or 0
+        except AttributeError:
+            state = self._unknown or 0
         state = self.get_state(state).name
         try:
             alias = self._states_alias[state]
@@ -438,13 +436,7 @@ class StateRecordPositionerBase(StatePositioner):
 
     def __init__(self, prefix, *, name, **kwargs):
         super().__init__(prefix, name=name, **kwargs)
-        self._has_subscribed_readback = False
         self._has_checked_state_enum = False
-
-    def _run_sub_readback(self, *args, **kwargs):
-        kwargs.pop('sub_type')
-        kwargs.pop('obj')
-        self._run_subs(sub_type=self.SUB_READBACK, obj=self, **kwargs)
 
     def get_state(self, value):
         if (not self._has_checked_state_enum
@@ -474,15 +466,6 @@ class StateRecordPositioner(StateRecordPositionerBase):
 
     tab_whitelist = ['motor']
 
-    def subscribe(self, cb, event_type=None, run=True):
-        cid = super().subscribe(cb, event_type=event_type, run=run)
-        if (event_type == self.SUB_READBACK and not
-                self._has_subscribed_readback):
-            self.motor.user_readback.subscribe(self._run_sub_readback,
-                                               run=False)
-            self._has_subscribed_readback = True
-        return cid
-
 
 class CombinedStateRecordPositioner(StateRecordPositionerBase):
     """
@@ -498,17 +481,6 @@ class CombinedStateRecordPositioner(StateRecordPositionerBase):
     y_motor = Cpt(IMS, ':Y:MOTOR', kind='normal')
 
     tab_whitelist = ['x_motor', 'y_motor']
-
-    def subscribe(self, cb, event_type=None, run=True):
-        cid = super().subscribe(cb, event_type=event_type, run=run)
-        if (event_type == self.SUB_READBACK and not
-                self._has_subscribed_readback):
-            self.x_motor.user_readback.subscribe(self._run_sub_readback,
-                                                 run=False)
-            self.y_motor.user_readback.subscribe(self._run_sub_readback,
-                                                 run=False)
-            self._has_subscribed_readback = True
-        return cid
 
 
 class TwinCATStateConfigOne(Device):
