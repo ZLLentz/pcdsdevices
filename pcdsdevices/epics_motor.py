@@ -7,10 +7,10 @@ import os
 import shutil
 
 from ophyd.device import Component as Cpt
-from ophyd.device import FormattedComponent as FCpt
 from ophyd.device import Device
+from ophyd.device import FormattedComponent as FCpt
 from ophyd.epics_motor import EpicsMotor
-from ophyd.signal import EpicsSignal, EpicsSignalRO, Signal
+from ophyd.signal import DerivedSignal, EpicsSignal, EpicsSignalRO, Signal
 from ophyd.status import DeviceStatus, SubscriptionStatus
 from ophyd.status import wait as status_wait
 from ophyd.utils import LimitError
@@ -478,6 +478,40 @@ class BeckhoffAxisPLC(Device):
     set_metadata(cmd_err_reset, dict(variety='command', value=1))
 
 
+class HomingSignal(DerivedSignal):
+    """
+    DerivedSignal to indicate homing state.
+
+    Expects an EpicsSignal that reads from MSTA, which contains whether or not
+    we have homed as the 15th bit, and write to HOMF, which homes us in the
+    forward direction (or in the case of Beckhoff, uses the configured routine
+    regardless of direction).
+
+    Parameters
+    ----------
+    derived_from : Union[Signal, str]
+        The signal from which this one is derived.  This may be a string
+        attribute name that indicates a sibling to use.  When used in a
+        Device, this is then simply the attribute name of another
+        Component.
+
+    name : str, optional
+        The signal name
+
+    parent : Device, optional
+        The parent device
+    """
+    def inverse(self, value):
+        """
+        Converts the MSTA bitmask to just the "homed" bit (15th).
+
+        Shifts us 14 bits over to reach the 15th bit
+        Modulo 2 to pick out just the 15th bit if we have 16th or higher.
+        At time of writing, MSTA has only 15 bits but we are planning ahead.
+        """
+        return (int(value) >> 14) % 2
+
+
 class BeckhoffAxis(EpicsMotorInterface):
     """
     Beckhoff Axis motor record as implemented by ESS and extended by us.
@@ -485,7 +519,7 @@ class BeckhoffAxis(EpicsMotorInterface):
     This class adds a convenience :meth:`.clear_error` method, and makes
     sure to call it on stage.
 
-    It also exposes the PLC debug PVs.
+    It also exposes the PLC debug PVs and homing routine.
     """
 
     __doc__ += basic_positioner_init
@@ -495,6 +529,14 @@ class BeckhoffAxis(EpicsMotorInterface):
               doc='PLC error handling.')
     motor_spmg = Cpt(EpicsSignal, '.SPMG', kind='config',
                      doc='Stop, Pause, Move, Go')
+
+    homed = Cpt(HomingSignal, derived_from='_msta_home', kind='config',
+                doc='Homing command and readback.')
+    _msta_home = Cpt(EpicsSignal, '.MSTA',
+                     write_pv='.HOMF', kind='omitted',
+                     doc='Internal homing status step.')
+
+    set_metadata(homed, dict(variety='command', value=1))
 
     def clear_error(self):
         """Clear any active motion errors on this axis."""
