@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import enum
 import inspect
 import logging
@@ -8,6 +9,7 @@ import select
 import shutil
 import subprocess
 import sys
+import textwrap
 import threading
 import time
 from collections.abc import Iterable
@@ -932,3 +934,87 @@ def set_standard_ordering(cls: type[Device]) -> type[Device]:
     sort_components_by_kind(cls)
     move_subdevices_to_start(cls)
     return cls
+
+
+def get_used_components(
+    cls: type[Device],
+    method_name: str,
+    seen: Optional[set[str]] = None,
+) -> set[str]:
+    """
+    Get the names of all components that may be accessed by a method.
+
+    This is a best-effort attempt at guessing which resources will be
+    accessed by an arbitrary device function.
+
+    This will sometimes return extra results, but it should never
+    omit a component that will be used.
+
+    This works by inspecting the ast.
+
+    TODO handle super
+
+    Parameters
+    ----------
+    cls : any Device class
+        The class that contains the method
+    method_name : str
+        The name of the method to check
+    seen : set of str, optional
+        Used recursively to avoid infinite loops
+
+    Return
+    ------
+    component_names : set of str
+        All the component names that might be accessed in the method.
+    """
+    method = getattr(cls, method_name)
+    if not callable(method):
+        raise ValueError(f'Recieved invalid method name {method_name}')
+    tree = ast.parse(
+        textwrap.dedent(
+            inspect.getsource(method)
+        )
+    )
+    lookups = []
+    did_a_getattr_on_self = False
+    # Find all self.something references
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            # Some attribute lookup
+            if isinstance(node.value, ast.Name):
+                if node.value.id == 'self':
+                    lookups.append(node.attr)
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                if node.func.id == 'getattr':
+                    if node.args and node.args[0].id == 'self':
+                        did_a_getattr_on_self = True
+
+    if did_a_getattr_on_self:
+        return set(cls.component_names)
+    else:
+        component_names = set()
+    if seen is None:
+        seen = set()
+    for lookup in lookups:
+        # Veto already seen
+        if lookup in seen:
+            continue
+        else:
+            seen.add(lookup)
+        # If it's a component, include in the return
+        if lookup in cls.component_names:
+            component_names.add(lookup)
+            continue
+        # If it's a method, check that method too
+        method = getattr(cls, lookup, None)
+        if callable(method):
+            component_names.update(
+                get_used_components(
+                    cls=cls,
+                    method_name=lookup,
+                    seen=seen,
+                )
+            )
+    return component_names
