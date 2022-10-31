@@ -1,6 +1,7 @@
 """
 Module for defining bell-and-whistles movement features.
 """
+import copy
 import functools
 import logging
 import numbers
@@ -14,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 from types import MethodType, SimpleNamespace
-from typing import Optional
+from typing import ClassVar, Optional
 from weakref import WeakSet
 
 import ophyd
@@ -22,7 +23,7 @@ import yaml
 from bluesky.utils import ProgressBar
 from lightpath import LightpathState
 from ophyd import Component as Cpt
-from ophyd.device import Device
+from ophyd.device import Device, do_not_wait_for_lazy_connection
 from ophyd.ophydobj import Kind, OphydObject
 from ophyd.positioner import PositionerBase
 from ophyd.signal import AttributeSignal, Signal
@@ -43,6 +44,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 engineering_mode = True
+lazy_mode = True
 
 OphydObject_whitelist = []
 BlueskyInterface_whitelist = []
@@ -189,6 +191,18 @@ class BaseInterface:
     non-engineering mode, only elements on the whitelists will be displayed to
     the user.
 
+    Parameters
+    ----------
+    lazy_mode : bool, optional
+        If ``True``, use the heavy-handed lazy enforcement for startup speed.
+        If ``False``, behave like a normal ophyd device.
+        If omitted, use the configured default last set by `set_lazy_mode`.
+        The configured default defaults to ``True``.
+        In general, ``True`` is better if you expect to use only a subset of
+        the EPICS connections in your session, and ``False`` is better if
+        you expect to use them all.
+        See `set_lazy_mode` for details on lazy mode.
+
     Attributes
     ----------
     tab_whitelist : list
@@ -201,6 +215,7 @@ class BaseInterface:
 
     _class_tab: TabCompletionHelperClass
     _tab: TabCompletionHelperInstance
+    _do_prime_cpts: ClassVar[Optional[list[str]]] = None
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -217,8 +232,19 @@ class BaseInterface:
             )
 
         cls._class_tab = TabCompletionHelperClass(cls)
+        cls._normal_sig_attrs = cls._sig_attrs
+        cls._lazy_sig_attrs = copy.deepcopy(cls._sig_attrs)
+        for cpt in cls._lazy_sig_attrs.values():
+            cpt.lazy = True
+            # Not sure the best way to do this
+            # cpt._subscriptions = {}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, lazy_mode: Optional[bool] = None, **kwargs):
+        if lazy_mode is None:
+            lazy_mode = get_lazy_mode()
+        self.lazy_mode = lazy_mode
+        if lazy_mode:
+            self._sig_attrs = self._lazy_sig_attrs
         super().__init__(*args, **kwargs)
         self._tab = self._class_tab.new_instance(self)
 
@@ -407,6 +433,40 @@ class BaseInterface:
                          stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL)
 
+    def prime_cpts(
+        self,
+        cpts: Optional[list[str]] = None,
+        wait: bool = False,
+        timeout: float = 1.0,
+    ):
+        """
+        Get specific components or many components ready.
+
+        Parameters
+        ----------
+        cpts : list of str, optional
+            The attr names of the components to prime.
+            If omitted, we'll use self._do_prime_cpts.
+            If that is None, we'll use all of the non-lazy cpts.
+        wait : bool
+            Set to True to wait for connections.
+        timeout : float
+            The duration of time to wait if wait is True.
+        """
+        if cpts is None:
+            cpts = self._do_prime_cpts
+        if cpts is None:
+            cpts = [attr for attr, cpt in self._normal_sig_attrs.items()
+                    if not cpt.lazy or cpt._subscriptions]
+        with do_not_wait_for_lazy_connection:
+            objs = [getattr(self, attr) for attr in cpts]
+        if wait:
+            start_time = time.monotonic()
+            for obj in objs:
+                elapsed = time.monotonic() - start_time
+                remaining = timeout - elapsed
+                obj.wait_for_connection(timeout=remaining)
+
 
 def get_name(obj, default):
     try:
@@ -584,6 +644,59 @@ def get_engineering_mode():
     """
 
     return engineering_mode
+
+
+def set_lazy_mode(lazy: bool):
+    """
+    Sets the default lazy mode for pcdsdevices interface devices.
+
+    This is an option that can be overriden on a per-device basis using
+    the ``lazy_mode`` argument. If unset, this defaults to ``True``.
+
+    If ``False``, devices behave like standard ``ophyd`` devices.
+    If ``True``, devices behave slightly differently:
+
+    - On init, all components will be treated as if they were declared as
+      lazy. That is, they will not be created or initialize any EPICS
+      connections. This considerably decreases the startup time of large
+      sessions, with the understanding that we'll need to do this setup
+      later.
+    - This deferred setup will be described as "priming".
+    - When any core method is called, any previously non-lazy components
+      will be primed, but not waited for.
+    - In subclasses, call "prime_cpts" to set up all of or only
+      specific components.
+    - Core methods are defined to some extent in the interface classes
+      but should be expanded in subclasses. The interfaces include
+      methods like stage, move, etc. as appropriate that call
+      "prime_cpts(self._do_prime_cpts)". self._do_prime_cpts defaults
+      to None, which has us priming all of the components.
+
+    Parameters
+    ----------
+    expert : bool
+        Set to ``True`` to enable lazy mode or ``False`` to disable it.
+        This can be overriden on a per-device basis.
+        If unset, this defaults to ``True``.
+    """
+
+    global lazy_mode
+    lazy_mode = bool(lazy)
+
+
+def get_lazy_mode() -> bool:
+    """
+    Get the last value set by :meth:`set_lazy_mode`.
+
+    If unset, this defaults to ``True``.
+
+    Returns
+    -------
+    lazy : bool
+        The current lazy mode. See :meth:`set_lazy_mode`.
+    """
+
+    return lazy_mode
 
 
 class MvInterface(BaseInterface):
